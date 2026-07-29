@@ -1,0 +1,172 @@
+name: release-build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+
+permissions:
+  contents: write  # to create releases and upload assets
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # linux x86 (32-bit)
+          - goos: linux
+            goarch: "386"
+            suffix: linux_x86
+          # linux amd64 baseline (v1)
+          - goos: linux
+            goarch: amd64
+            goamd64: v1
+            suffix: linux_x86_v1
+          # linux amd64 v2
+          - goos: linux
+            goarch: amd64
+            goamd64: v2
+            suffix: linux_x86_v2
+          # linux amd64 v3
+          - goos: linux
+            goarch: amd64
+            goamd64: v3
+            suffix: linux_x86_v3
+          # linux amd64 v4
+          - goos: linux
+            goarch: amd64
+            goamd64: v4
+            suffix: linux_x86_v4
+          # linux arm64 (aarch64)
+          - goos: linux
+            goarch: arm64
+            suffix: linux_aarch64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Build frontend
+        run: |
+          npm ci
+          make frontend
+
+      - name: Compute version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          echo "VERSION=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        id: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOAMD64: ${{ matrix.goamd64 }}
+        run: |
+          BINARY="gitea-${{ steps.version.outputs.version }}-${{ matrix.suffix }}"
+          TAGS="bindata sqlite sqlite_unlock_notify"
+          LDFLAGS="-s -w -X main.Version=${{ steps.version.outputs.version }} -X main.Tags=$TAGS"
+          CGO_ENABLED=0 go build -tags "$TAGS" -ldflags "$LDFLAGS" -o "$BINARY" .
+          echo "binary=$BINARY" >> "$GITHUB_OUTPUT"
+
+      - name: Create archive
+        id: archive
+        run: |
+          BINARY="${{ steps.build.outputs.binary }}"
+          ARCHIVE="${BINARY}.tar.gz"
+          tar czf "$ARCHIVE" "$BINARY"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Compute checksums
+        id: checksum
+        run: |
+          BINARY="${{ steps.build.outputs.binary }}"
+          ARCHIVE="${{ steps.archive.outputs.archive }}"
+          sha256sum "$BINARY" > "${BINARY}.sha256"
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          cat "${BINARY}.sha256"
+          cat "${ARCHIVE}.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.binary }}
+          path: |
+            ${{ steps.build.outputs.binary }}
+            ${{ steps.archive.outputs.archive }}
+            *.sha256
+          if-no-files-found: error
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Display structure
+        run: ls -la artifacts/
+
+      - name: Create or update release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.ref_name }}"
+          fi
+          TAG="${VERSION}"
+
+          # Check if release exists
+          if gh release view "$TAG" --json id > /dev/null 2>&1; then
+            echo "Release $TAG exists, uploading assets"
+          else
+            echo "Creating release $TAG"
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Gitea release $TAG" \
+              --draft
+          fi
+
+          # Upload all artifacts
+          shopt -s nullglob
+          for f in artifacts/*; do
+            echo "Uploading $f"
+            gh release upload "$TAG" "$f" --clobber
+          done
