@@ -5,6 +5,7 @@ package auth
 
 import (
 	"fmt"
+	"strconv"
 
 	asymkey_model "gitea.dev/models/asymkey"
 	"gitea.dev/models/auth"
@@ -62,6 +63,30 @@ func oauth2SignInSync(ctx *context.Context, authSourceID int64, u *user_model.Us
 	err = oauth2UpdateSSHPubIfNeed(ctx, authSource, &gothUser, u)
 	if err != nil {
 		log.Error("Unable to sync OAuth2 SSH public key %s: %v", gothUser.Provider, err)
+	}
+
+	// sync trust level from claim
+	if oauth2Source.TrustLevelClaimName != "" {
+		if val, ok := gothUser.RawData[oauth2Source.TrustLevelClaimName]; ok {
+			var trustLevel int64
+			switch v := val.(type) {
+			case float64:
+				trustLevel = int64(v)
+			case int:
+				trustLevel = int64(v)
+			case string:
+				if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+					trustLevel = parsed
+				}
+			}
+			// Only update if different or unset
+			if u.LinuxDoTrustLevel == nil || *u.LinuxDoTrustLevel != trustLevel {
+				u.LinuxDoTrustLevel = &trustLevel
+				if err := user_model.UpdateUserCols(ctx, u, "linux_do_trust_level"); err != nil {
+					log.Error("Failed to update trust level: %v", err)
+				}
+			}
+		}
 	}
 }
 

@@ -31,6 +31,7 @@ type Source struct {
 	SSHPublicKeyClaimName string
 	FullNameClaimName     string
 	ExternalIDClaim       string
+	TrustLevelClaimName   string `json:"trust_level_claim_name,omitempty"`
 }
 
 // FromDB fills up an OAuth2Config from serialized format.

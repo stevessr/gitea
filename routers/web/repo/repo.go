@@ -271,6 +271,7 @@ func CreatePost(ctx *context.Context) {
 			IsTemplate:       form.Template,
 			TrustModel:       repo_model.DefaultTrustModel,
 			ObjectFormatName: form.ObjectFormatName,
+			Visibility:       repo_model.ParseRepoVisibility(form.Visibility),
 		})
 		if err == nil {
 			log.Trace("Repository created [%d]: %s/%s", repo.ID, ctxUser.Name, repo.Name)

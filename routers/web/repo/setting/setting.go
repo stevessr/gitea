@@ -249,6 +249,11 @@ func handleSettingsPostUpdate(ctx *context.Context) {
 	repo.Website = form.Website
 	repo.IsTemplate = form.Template
 
+	if form.Visibility != "" {
+		repo.Visibility = repo_model.ParseRepoVisibility(form.Visibility)
+		repo.IsPrivate = repo.Visibility != repo_model.RepoVisibilityPublic
+	}
+
 	if err := repo_service.UpdateRepository(ctx, repo, false); err != nil {
 		ctx.ServerError("UpdateRepository", err)
 		return
@@ -1051,21 +1056,33 @@ func handleSettingsPostVisibility(ctx *context.Context) {
 		return
 	}
 
-	private := ctx.FormOptionalBool("private").ValueOrDefault(true) // default to true for privacy & safety
+	newVisibility := repo_model.ParseRepoVisibility(ctx.FormString("visibility"))
+	isPrivate := newVisibility != repo_model.RepoVisibilityPublic
 
 	// when ForcePrivate enabled, you could change public repo to private, but only admin users can change private to public
-	if !private && setting.Repository.ForcePrivate && !ctx.Doer.IsAdmin {
+	if !isPrivate && setting.Repository.ForcePrivate && !ctx.Doer.IsAdmin {
 		ctx.JSONError(ctx.Tr("form.repository_force_private"))
 		return
 	}
-	if private && repo.FullName() != ctx.FormString("confirm_repo_name") {
+	if newVisibility == repo_model.RepoVisibilityPrivate && repo.FullName() != ctx.FormString("confirm_repo_name") {
 		ctx.JSONError(ctx.Tr("form.enterred_invalid_repo_name"))
 		return
 	}
 
-	err := repo_service.MakeRepoPrivate(ctx, repo, private)
-	if err != nil {
-		log.Error("Tried to change the visibility of the repo: %s", err)
+	if newVisibility == repo_model.RepoVisibilityPrivate || newVisibility == repo_model.RepoVisibilityPublic {
+		err := repo_service.MakeRepoPrivate(ctx, repo, isPrivate)
+		if err != nil {
+			log.Error("Tried to change the visibility of the repo: %s", err)
+			ctx.JSONError(ctx.Tr("repo.settings.visibility.error"))
+			return
+		}
+	}
+
+	// For all visibility levels, update the field
+	repo.Visibility = newVisibility
+	repo.IsPrivate = isPrivate
+	if err := repo_model.UpdateRepositoryColsNoAutoTime(ctx, repo, "visibility", "is_private"); err != nil {
+		log.Error("Failed to update visibility: %s", err)
 		ctx.JSONError(ctx.Tr("repo.settings.visibility.error"))
 		return
 	}

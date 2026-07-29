@@ -704,6 +704,33 @@ func AccessibleRepositoryCondition(user *user_model.User, unitType unit.Type) bu
 			orgVisibilityLimit := []structs.VisibleType{structs.VisibleTypePrivate, structs.VisibleTypeLimited}
 			cond = userAllPublicRepoCond(cond, orgVisibilityLimit)
 		}
+
+		// 6. Repositories with login visibility (any authenticated user)
+		cond = cond.Or(builder.Eq{"`repository`.visibility": RepoVisibilityLogin})
+
+		// 7. Repositories with trust-level based visibility
+		if user.LinuxDoTrustLevel != nil {
+			tl := *user.LinuxDoTrustLevel
+			var visibilityLevels []int
+			if tl >= 4 {
+				visibilityLevels = append(visibilityLevels, int(RepoVisibilityLevel4))
+			}
+			if tl >= 3 {
+				visibilityLevels = append(visibilityLevels, int(RepoVisibilityLevel3))
+			}
+			if tl >= 2 {
+				visibilityLevels = append(visibilityLevels, int(RepoVisibilityLevel2))
+			}
+			if tl >= 1 {
+				visibilityLevels = append(visibilityLevels, int(RepoVisibilityLevel1))
+			}
+			if tl >= 0 {
+				visibilityLevels = append(visibilityLevels, int(RepoVisibilityLevel0))
+			}
+			if len(visibilityLevels) > 0 {
+				cond = cond.Or(builder.In("`repository`.visibility", visibilityLevels))
+			}
+		}
 	}
 
 	return cond

@@ -139,6 +139,94 @@ func ToTrustModel(model string) TrustModelType {
 	return DefaultTrustModel
 }
 
+// RepoVisibilityType defines the visibility levels for a repository based on trust level
+// Values from 0-7, higher means more visible
+// 0: private, 1-5: trust-level based, 6: logged-in, 7: public
+type RepoVisibilityType int
+
+const (
+	RepoVisibilityPrivate RepoVisibilityType = iota // 0
+	RepoVisibilityLevel4                            // 1 - requires trust level >= 4
+	RepoVisibilityLevel3                            // 2 - requires trust level >= 3
+	RepoVisibilityLevel2                            // 3 - requires trust level >= 2
+	RepoVisibilityLevel1                            // 4 - requires trust level >= 1
+	RepoVisibilityLevel0                            // 5 - requires trust level >= 0 (any LD user)
+	RepoVisibilityLogin                             // 6 - any logged-in user
+	RepoVisibilityPublic                            // 7 - everyone
+)
+
+// String returns the string representation of RepoVisibilityType
+func (v RepoVisibilityType) String() string {
+	switch v {
+	case RepoVisibilityPrivate:
+		return "private"
+	case RepoVisibilityLevel4:
+		return "lv4"
+	case RepoVisibilityLevel3:
+		return "lv3"
+	case RepoVisibilityLevel2:
+		return "lv2"
+	case RepoVisibilityLevel1:
+		return "lv1"
+	case RepoVisibilityLevel0:
+		return "lv0"
+	case RepoVisibilityLogin:
+		return "login"
+	case RepoVisibilityPublic:
+		return "public"
+	default:
+		return "unknown"
+	}
+}
+
+// HumanReadable returns a human-readable label for the visibility level
+func (v RepoVisibilityType) HumanReadable() string {
+	switch v {
+	case RepoVisibilityPrivate:
+		return "Private"
+	case RepoVisibilityLevel4:
+		return "Trust Level 4+"
+	case RepoVisibilityLevel3:
+		return "Trust Level 3+"
+	case RepoVisibilityLevel2:
+		return "Trust Level 2+"
+	case RepoVisibilityLevel1:
+		return "Trust Level 1+"
+	case RepoVisibilityLevel0:
+		return "Trust Level 0+"
+	case RepoVisibilityLogin:
+		return "Logged-in Users"
+	case RepoVisibilityPublic:
+		return "Public"
+	default:
+		return "Unknown"
+	}
+}
+
+// ParseRepoVisibility converts a string to RepoVisibilityType
+func ParseRepoVisibility(s string) RepoVisibilityType {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "private":
+		return RepoVisibilityPrivate
+	case "lv4":
+		return RepoVisibilityLevel4
+	case "lv3":
+		return RepoVisibilityLevel3
+	case "lv2":
+		return RepoVisibilityLevel2
+	case "lv1":
+		return RepoVisibilityLevel1
+	case "lv0":
+		return RepoVisibilityLevel0
+	case "login":
+		return RepoVisibilityLogin
+	case "public":
+		return RepoVisibilityPublic
+	default:
+		return RepoVisibilityPrivate
+	}
+}
+
 // RepositoryStatus defines the status of repository
 type RepositoryStatus int
 
@@ -212,6 +300,9 @@ type Repository struct {
 	ObjectFormatName                string             `xorm:"VARCHAR(6) NOT NULL DEFAULT 'sha1'"`
 
 	TrustModel TrustModelType
+
+	// Repo visibility based on Linux Do trust level
+	Visibility RepoVisibilityType `xorm:"NOT NULL DEFAULT 0"`
 
 	// Avatar: ID(10-20)-md5(32) - must fit into 64 symbols
 	Avatar string `xorm:"VARCHAR(64)"`
