@@ -121,6 +121,17 @@ func init() {
 		},
 	))
 
+	RegisterGothProvider(NewCustomProvider(
+		"linuxdo", "Linux Do", &CustomURLSettings{
+			AuthURL:    availableAttribute("https://connect.linux.do/oauth2/authorize"),
+			TokenURL:   availableAttribute("https://connect.linux.do/oauth2/token"),
+			ProfileURL: availableAttribute("https://connect.linux.do/api/user"),
+		},
+		func(clientID, secret, callbackURL string, custom *CustomURLMapping, scopes []string) (goth.Provider, error) {
+			return NewLinuxDoProvider(clientID, secret, callbackURL, custom.AuthURL, custom.TokenURL, custom.ProfileURL, scopes...), nil
+		},
+	))
+
 	RegisterGothProvider(&AwsCognitoProvider{})
 }
 

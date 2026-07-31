@@ -1,0 +1,183 @@
+name: release-build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.0.0). The tag will be created if it does not exist.'
+        required: true
+
+permissions:
+  contents: write  # to create releases and upload assets
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.out.tag }}
+      version: ${{ steps.out.version }}
+    steps:
+      - id: out
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # linux x86 (32-bit)
+          - goos: linux
+            goarch: "386"
+            suffix: linux_x86
+          # linux amd64 baseline (v1)
+          - goos: linux
+            goarch: amd64
+            goamd64: v1
+            suffix: linux_x86_v1
+          # linux amd64 v2
+          - goos: linux
+            goarch: amd64
+            goamd64: v2
+            suffix: linux_x86_v2
+          # linux amd64 v3
+          - goos: linux
+            goarch: amd64
+            goamd64: v3
+            suffix: linux_x86_v3
+          # linux amd64 v4
+          - goos: linux
+            goarch: amd64
+            goamd64: v4
+            suffix: linux_x86_v4
+          # linux arm64 (aarch64)
+          - goos: linux
+            goarch: arm64
+            suffix: linux_aarch64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Build frontend
+        run: |
+          npm ci
+          make frontend
+
+      - name: Build binary
+        id: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOAMD64: ${{ matrix.goamd64 }}
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          BINARY="gitea-${VERSION}-${{ matrix.suffix }}"
+          TAGS="bindata sqlite sqlite_unlock_notify"
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X main.Tags=${TAGS}"
+          CGO_ENABLED=0 go build -tags "$TAGS" -ldflags "$LDFLAGS" -o "$BINARY" .
+          echo "binary=${BINARY}" >> "$GITHUB_OUTPUT"
+
+      - name: Create archive
+        id: archive
+        run: |
+          BINARY="${{ steps.build.outputs.binary }}"
+          ARCHIVE="${BINARY}.tar.gz"
+          tar czf "$ARCHIVE" "$BINARY"
+          echo "archive=${ARCHIVE}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute checksums
+        run: |
+          BINARY="${{ steps.build.outputs.binary }}"
+          ARCHIVE="${{ steps.archive.outputs.archive }}"
+          sha256sum "$BINARY" > "${BINARY}.sha256"
+          sha256sum "$ARCHIVE" > "${ARCHIVE}.sha256"
+          cat "${BINARY}.sha256"
+          cat "${ARCHIVE}.sha256"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.build.outputs.binary }}
+          path: |
+            ${{ steps.build.outputs.binary }}
+            ${{ steps.archive.outputs.archive }}
+            *.sha256
+          if-no-files-found: error
+
+  create-release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Ensure tag exists (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.version.outputs.tag }}"
+          if ! git ls-remote --tags origin "refs/tags/${TAG}" | grep -q .; then
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git tag "${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.version.outputs.tag }}"
+
+          # Check if release exists
+          if gh release view "$TAG" --json id > /dev/null 2>&1; then
+            echo "Release $TAG exists, uploading assets"
+          else
+            echo "Creating release $TAG"
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "Gitea release $TAG" \
+              --draft
+          fi
+
+          # Upload all artifacts
+          shopt -s nullglob
+          for f in artifacts/*; do
+            echo "Uploading $f"
+            gh release upload "$TAG" "$f" --clobber
+          done

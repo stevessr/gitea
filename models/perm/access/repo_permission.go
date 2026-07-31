@@ -406,8 +406,8 @@ func GetIndividualUserRepoPermission(ctx context.Context, repo *repo_model.Repos
 	}
 	perm.units = repo.Units
 
-	// anonymous user visit private repo.
-	if user == nil && repo.IsPrivate {
+	// anonymous user visit non-public repo.
+	if user == nil && repo.Visibility != repo_model.RepoVisibilityPublic {
 		perm.AccessMode = perm_model.AccessModeNone
 		return perm, nil
 	}
@@ -454,8 +454,44 @@ func GetIndividualUserRepoPermission(ctx context.Context, repo *repo_model.Repos
 		return perm, nil
 	}
 
-	// now: the owner is visible to doer, if the repo is public, then the min access mode is read
-	minAccessMode := util.Iif(!repo.IsPrivate && !user.IsRestricted, perm_model.AccessModeRead, perm_model.AccessModeNone)
+	// now: the owner is visible to doer, if the repo is public or login-visibility, then the min access mode is read
+	var minAccessMode perm_model.AccessMode
+	if repo.Visibility == repo_model.RepoVisibilityPublic {
+		if !user.IsRestricted {
+			minAccessMode = perm_model.AccessModeRead
+		} else {
+			minAccessMode = perm_model.AccessModeNone
+		}
+	} else if repo.Visibility == repo_model.RepoVisibilityLogin {
+		// Any logged-in user can read
+		minAccessMode = perm_model.AccessModeRead
+	} else if repo.Visibility == repo_model.RepoVisibilityLevel0 ||
+		repo.Visibility == repo_model.RepoVisibilityLevel1 ||
+		repo.Visibility == repo_model.RepoVisibilityLevel2 ||
+		repo.Visibility == repo_model.RepoVisibilityLevel3 ||
+		repo.Visibility == repo_model.RepoVisibilityLevel4 {
+		requiredTrustLevel := 0
+		switch repo.Visibility {
+		case repo_model.RepoVisibilityLevel4:
+			requiredTrustLevel = 4
+		case repo_model.RepoVisibilityLevel3:
+			requiredTrustLevel = 3
+		case repo_model.RepoVisibilityLevel2:
+			requiredTrustLevel = 2
+		case repo_model.RepoVisibilityLevel1:
+			requiredTrustLevel = 1
+		case repo_model.RepoVisibilityLevel0:
+			requiredTrustLevel = 0
+		}
+		if user.LinuxDoTrustLevel != nil && *user.LinuxDoTrustLevel >= int64(requiredTrustLevel) && !user.IsRestricted {
+			minAccessMode = perm_model.AccessModeRead
+		} else {
+			minAccessMode = perm_model.AccessModeNone
+		}
+	} else {
+		// Private: no min access
+		minAccessMode = perm_model.AccessModeNone
+	}
 	perm.AccessMode = max(perm.AccessMode, minAccessMode)
 
 	// get units mode from teams
